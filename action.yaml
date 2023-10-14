@@ -1,0 +1,94 @@
+name: 'Deploy to Altervista'
+author: 'dreadnaut'
+description: |
+  Upload files to your Altervista website via FTP
+
+branding:
+  icon: chevrons-up
+  color: yellow
+
+inputs:
+  ftp-username:
+    description: 'Your Altervista username, or a FTP user (user@yourwebsite)'
+    required: true
+  ftp-password:
+    description: 'The password for the FTP user above'
+    required: true
+  local-root:
+    description: 'Starting directory in the repository from which to upload files'
+    required: false
+    default: './'
+  remote-root:
+    description: 'Target directory on the website where to upload files'
+    required: false
+    default: '/'
+  exclude-patterns:
+    description: 'Glob patterns of files to exclude from the upload'
+    required: false
+    default: '.github'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Download git-ftp
+      shell: bash
+      run: |
+        GIT_FTP=https://raw.githubusercontent.com/git-ftp/git-ftp/1.6.0/git-ftp 
+        curl --silent --show-error $GIT_FTP > .git/git-ftp
+        chmod 755 .git/git-ftp
+
+    - name: Setup ignore file
+      shell: bash
+      run: |
+        echo >> .git-ftp-ignore
+        echo "${{ inputs.exclude-patterns }}" >> .git-ftp-ignore
+        echo "📃 These files will not be uploaded:"
+        cat .git-ftp-ignore
+        echo
+
+    - name: Upload
+      shell: bash
+      run: |
+        AV_USER=$(echo ${{ inputs.ftp-username }} | cut -d "@" -f2)
+        AV_FTP_HOST="ftp.${AV_USER}.altervista.org"
+        FTP_URL="ftp://${AV_FTP_HOST}/"
+        FTP_USER=${{ inputs.ftp-username }}
+        FTP_PASSWORD=${{ inputs.ftp-password }}
+        LOCAL_ROOT=${{ inputs.local-root }}
+        REMOTE_ROOT=${{ inputs.remote-root }}
+
+        echo "🌍 Connect to ${AV_FTP_HOST}"
+        echo "⚙️ Upload from ${LOCAL_ROOT} to ${REMOTE_ROOT}"
+        echo
+
+        LAST_COMMIT=$(curl --silent --user "${FTP_USER}:${FTP_PASSWORD}" \
+          "${FTP_URL}${REMOTE_ROOT}/.git-ftp.log" || true)
+
+        if [[ -z "$LAST_COMMIT" ]]; then
+          echo "⭕ No previous commit found"
+          FULL_UPLOAD=yes
+        else
+          echo "✅ Last uploaded commit: ${LAST_COMMIT}"
+          FULL_UPLOAD=no
+        fi
+        echo
+
+        THIS_COMMIT=$(git rev-parse --short HEAD)
+        if [[ $FULL_UPLOAD == "yes" ]]; then
+          echo "👆 Upload all files in $THIS_COMMIT"
+          .git/git-ftp init \
+            --syncroot "$LOCAL_ROOT" \
+            --remote-root "$REMOTE_ROOT" \
+            --user "$FTP_USER" \
+            --passwd "$FTP_PASSWORD" \
+            "$FTP_URL"
+        else
+          LAST_COMMIT_SHORT=$(git rev-parse --short "$LAST_COMMIT")
+          echo "👆 Upload changes between $LAST_COMMIT_SHORT and $THIS_COMMIT"
+          .git/git-ftp push \
+            --syncroot "$LOCAL_ROOT" \
+            --remote-root "$REMOTE_ROOT" \
+            --user "$FTP_USER" \
+            --passwd "$FTP_PASSWORD" \
+            "$FTP_URL"
+        fi
